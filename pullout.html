@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TLGP WMS — Pull-Out Slip</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <!-- SheetJS for Excel parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+    /* ── PRINT AREA ─────────────────────────── */
+    @media print {
+        body > * { display: none !important; }
+        #po-print-area { display: block !important; }
+        .print-close-po { display: none !important; }
+    }
+    #po-print-area {
+        display: none;
+        position: fixed; inset: 0; z-index: 99999;
+        background: #fff; overflow: auto; padding: 0;
+    }
+    @page { size: A4 landscape; margin: 8mm 10mm; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .po-slip-page {
+        width: 277mm; max-width: 277mm; margin: 0 auto;
+        background: #fff; font-family: Arial, Helvetica, sans-serif;
+        font-size: 8pt; color: #000; padding: 0; box-sizing: border-box;
+    }
+    /* ── HEADER ── */
+    .po-sp-header { display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:1.5mm; }
+    .po-sp-left { display:flex; flex-direction:column; gap:0.5mm; min-width:60mm; }
+    .po-sp-logo-row { display:flex; align-items:center; gap:2mm; margin-bottom:0.5mm; }
+    .po-sp-logo-s { width:6mm; height:6mm; background:#c00; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:8.5pt; font-weight:900; font-style:italic; flex-shrink:0; }
+    .po-sp-company-name { font-size:7pt; font-weight:700; line-height:1.3; }
+    .po-sp-company-sub  { font-size:5.5pt; color:#555; font-style:italic; }
+    .po-sp-from-to { display:flex; flex-direction:column; gap:0.8mm; margin-top:1mm; }
+    .po-sp-ft-row { font-size:7.5pt; font-weight:600; display:flex; align-items:baseline; gap:1.5mm; }
+    .po-sp-ft-lbl { font-weight:700; min-width:8mm; }
+    .po-sp-ft-val { border-bottom:1px solid #000; min-width:30mm; padding-bottom:0.5mm; }
+    .po-sp-center { text-align:center; flex:1; padding:0 3mm; }
+    .po-sp-title { font-size:22pt; font-weight:900; letter-spacing:2px; color:#000; line-height:1; }
+    .po-sp-right { display:flex; flex-direction:column; align-items:flex-end; gap:2mm; min-width:60mm; justify-content:flex-end; }
+    .po-sp-ctrl-row { display:flex; align-items:baseline; gap:2mm; }
+    .po-sp-ctrl-lbl { font-size:7.5pt; font-weight:700; white-space:nowrap; }
+    .po-sp-ctrl-val { font-size:9pt; font-weight:900; font-family:'Courier New',monospace; border-bottom:1.5px solid #000; min-width:42mm; text-align:left; padding-bottom:0.5mm; }
+    /* ── MAIN BORDERED BOX ── */
+    .po-sp-box { border:1.5px solid #000; width:100%; box-sizing:border-box; }
+    .po-sp-date-row { display:flex; align-items:center; gap:3mm; padding:1.5mm 3mm; border-bottom:1px solid #888; font-size:7.5pt; font-weight:700; }
+    .po-sp-date-lbl { font-weight:700; white-space:nowrap; }
+    .po-sp-date-val { border-bottom:1px solid #000; min-width:35mm; display:inline-block; }
+    /* ── TABLE ── */
+    .po-sp-table { width:100%; border-collapse:collapse; font-size:7pt; table-layout:fixed; }
+    .po-sp-table thead th { background:#c8c8c8; border:1px solid #555; padding:2.5px 2px; font-size:6.5pt; font-weight:700; text-align:center; vertical-align:middle; white-space:normal; word-break:break-word; line-height:1.2; }
+    .po-sp-table tbody td { border:1px solid #bbb; padding:2px 2.5px; font-size:7pt; text-align:center; vertical-align:middle; word-break:break-word; line-height:1.2; }
+    .po-sp-table tbody td.l { text-align:left; }
+    .po-sp-table tbody td.r { text-align:right; font-weight:600; }
+    .po-sp-table tbody tr:nth-child(even) td { background:#f5f5f5; }
+    .po-sp-table tfoot td { font-weight:900; background:#e0e0e0; border:1.5px solid #444; padding:2px 3px; font-size:7.5pt; }
+    /* ── BELOW BOX ── */
+    .po-sp-note   { font-size:6.5pt; color:#444; margin-top:2mm; font-style:italic; }
+    .po-sp-sigs   { display:flex; justify-content:space-between; margin-top:5mm; gap:8mm; }
+    .po-sp-sig    { flex:1; display:flex; flex-direction:column; gap:4mm; }
+    .po-sp-sig-lbl  { font-size:7.5pt; font-weight:700; }
+    .po-sp-sig-line { border-top:1.5px solid #000; width:100%; }
+    .po-sp-footer   { text-align:right; margin-top:2mm; font-size:6.5pt; color:#888; font-style:italic; }
+    .print-close-po { position: fixed; top: 12px; right: 16px; z-index: 999999; background: #f05454; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+
+    /* ── PULL-OUT PAGE STYLES ──────────────────── */
+    .po-slip-card {
+        background: #fff;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.07);
+        overflow: hidden;
+        flex-shrink: 0;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .po-slip-banner {
+        background: linear-gradient(135deg, #1a0a0a 0%, #2d1010 60%, #1a0a0a 100%);
+        padding: 12px 18px 10px;
+        display: flex; align-items: center; justify-content: space-between;
+        border-bottom: 2px solid rgba(240,84,84,0.25);
+    }
+    .po-banner-left { display: flex; flex-direction: column; gap: 1px; }
+    .po-company { font-size: 9px; color: rgba(255,255,255,0.35); letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600; }
+    .po-slip-big-title { font-size: 20px; font-weight: 900; color: #ffe8e8; letter-spacing: 0.22em; text-transform: uppercase; text-shadow: 0 2px 10px rgba(240,84,84,0.3); }
+    .po-banner-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .po-ctrl-lbl { font-size: 8px; font-weight: 700; color: rgba(255,255,255,0.3); letter-spacing: 0.16em; }
+    .po-ctrl-no-input {
+        background: rgba(255,255,255,0.07); border: 1.5px solid rgba(240,84,84,0.5);
+        border-radius: 5px; color: #ff9090; font-size: 13px; font-weight: 800;
+        font-family: 'JetBrains Mono', monospace; padding: 5px 10px; outline: none;
+        text-align: center; letter-spacing: 0.08em; width: 200px; transition: 0.15s;
+    }
+    .po-ctrl-no-input:focus { border-color: #f05454; background: rgba(240,84,84,0.1); }
+    .po-ctrl-no-input::placeholder { color: rgba(255,255,255,0.18); font-size: 10px; }
+
+    .po-slip-fields {
+        display: flex; gap: 0; padding: 0; background: rgba(0,0,0,0.15);
+    }
+    .po-field-group {
+        display: flex; flex-direction: column; gap: 3px;
+        padding: 9px 14px; border-right: 1px solid rgba(255,255,255,0.05); flex: 1;
+    }
+    .po-field-group:last-child { border-right: none; }
+    .po-field-lbl { font-size: 8px; font-weight: 700; color: #2a3d56; letter-spacing: 0.14em; text-transform: uppercase; }
+    .po-field-static { font-size: 13px; font-weight: 800; color: #374151; letter-spacing: 0.04em; }
+    .po-field-inp {
+        background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 4px; color: #374151; font-size: 11px; font-weight: 600;
+        padding: 5px 7px; outline: none; transition: 0.15s; font-family: inherit; width: 100%;
+    }
+    .po-field-inp:focus { border-color: #f05454; background: rgba(240,84,84,0.07); }
+    .po-field-inp option { background: #fff; }
+
+    /* ── PENDING SLIP TABLE ─────────────────── */
+    .po-pending-section {
+        background: #fff; border-radius: 9px; border: 1px solid #e2e8f0;
+        display: flex; flex-direction: column; flex-grow: 1; overflow: hidden;
+        border-top: 2px solid rgba(240,84,84,0.4);
+    }
+    .po-pending-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 14px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; flex-shrink: 0;
+    }
+    .po-pending-title { font-size: 11px; font-weight: 800; color: #1e293b; letter-spacing: 0.1em; display: flex; align-items: center; gap: 8px; }
+    .po-pending-dot { width: 7px; height: 7px; background: #f05454; border-radius: 50%; animation: pd 2s infinite; box-shadow: 0 0 5px #f05454; }
+    .po-pending-actions { display: flex; gap: 6px; align-items: center; }
+
+    .po-table-wrap { overflow: auto; flex-grow: 1; }
+    .po-table-wrap table { width: 100%; min-width: 900px; border-collapse: collapse; table-layout: fixed; }
+
+    /* ── STATUS BADGES (APPROVAL) ──────────────── */
+    .status-pending  { background: rgba(251,191,36,0.12); color: #fbbf24; border: 1px solid rgba(251,191,36,0.28); }
+    .status-approved { background: rgba(52,211,153,0.12); color: #34d399; border: 1px solid rgba(52,211,153,0.28); }
+    .status-rejected { background: rgba(240,84,84,0.12); color: #f05454; border: 1px solid rgba(240,84,84,0.28); }
+
+    /* ── ITEM SELECTOR MODAL ──────────────────── */
+    .modal-overlay { position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.72); backdrop-filter: blur(4px); }
+    .modal-box { background: #fff; border-radius: 13px; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 30px 80px rgba(0,0,0,0.6); display: flex; flex-direction: column; max-height: 90vh; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,0.07); flex-shrink: 0; }
+    .modal-header span { font-size: 14px; font-weight: 800; color: #1e293b; letter-spacing: 0.06em; }
+    .modal-close { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #6a7a8f; font-size: 13px; font-weight: 700; padding: 4px 10px; cursor: pointer; transition: 0.15s; font-family: inherit; }
+    .modal-close:hover { background: #f05454; color: #fff; border-color: #f05454; }
+
+    .add-item-modal { width: 680px; }
+    .add-item-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+
+    .ai-search-bar { display: flex; gap: 8px; align-items: flex-end; }
+    .ai-search-bar .fg { flex: 1; }
+    .ai-search-btn { padding: 6px 14px; background: rgba(240,84,84,0.1); border: 1px solid rgba(240,84,84,0.3); border-radius: 6px; color: #f05454; font-size: 11px; font-weight: 700; cursor: pointer; transition: 0.15s; font-family: inherit; white-space: nowrap; align-self: flex-end; }
+    .ai-search-btn:hover { background: #f05454; color: #fff; }
+
+    .ai-results { max-height: 280px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 7px; }
+    .ai-result-row { display: grid; grid-template-columns: 1fr 1.2fr 1fr 70px 80px 100px; gap: 6px; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); align-items: center; cursor: pointer; transition: 0.13s; }
+    .ai-result-row:hover { background: rgba(240,84,84,0.06); }
+    .ai-result-row:last-child { border-bottom: none; }
+    .ai-result-row.header-row { background: #f8fafc; cursor: default; pointer-events: none; }
+    .ai-result-row.header-row span { font-size: 8px; font-weight: 700; color: #3a4a62; letter-spacing: 0.12em; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+    .ai-result-row span { font-size: 11px; color: #7a8a9f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ai-result-row .loc-cell { color: #f07070 !important; font-weight: 700 !important; font-family: 'JetBrains Mono', monospace !important; font-size: 11px !important; }
+    .ai-result-row b { color: #374151; }
+    .ai-result-row:hover b { color: #fff; }
+
+    .add-qty-form { background: rgba(255,255,255,0.02); border-radius: 8px; padding: 12px 14px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 10px; }
+    .add-qty-form .selected-item-info { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .add-qty-form .info-chip { display: flex; flex-direction: column; gap: 2px; }
+    .add-qty-form .info-chip-lbl { font-size: 8px; font-weight: 700; color: #94a3b8; letter-spacing: 0.14em; text-transform: uppercase; }
+    .add-qty-form .info-chip-val { font-size: 12px; color: #374151; font-weight: 600; }
+    .add-qty-inputs { display: grid; grid-template-columns: 1fr 2fr auto; gap: 8px; align-items: flex-end; }
+    .btn-add-item { padding: 8px 16px; background: linear-gradient(135deg,#f05454,#b82020); border: none; border-radius: 6px; color: #fff; font-size: 12px; font-weight: 800; cursor: pointer; transition: 0.15s; font-family: inherit; white-space: nowrap; }
+    .btn-add-item:hover { box-shadow: 0 4px 16px rgba(240,84,84,0.4); transform: translateY(-1px); }
+    .no-selection-msg { text-align: center; color: #2a3a50; font-size: 11px; font-style: italic; padding: 16px; }
+
+    /* ── APPROVAL MODAL ──────────────────────── */
+    .approve-modal { width: 480px; }
+    .approve-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    .approve-warning { background: rgba(240,84,84,0.08); border: 1px solid rgba(240,84,84,0.25); border-radius: 8px; padding: 14px; }
+    .approve-warning h3 { font-size: 13px; font-weight: 800; color: #f05454; margin-bottom: 6px; letter-spacing: 0.05em; }
+    .approve-warning p { font-size: 11px; color: #8a9ab8; line-height: 1.6; }
+    .approve-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .approve-sum-item { background: rgba(255,255,255,0.03); border-radius: 6px; padding: 10px 12px; border: 1px solid #e2e8f0; }
+    .approve-sum-lbl { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 3px; }
+    .approve-sum-val { font-size: 16px; font-weight: 800; color: #f05454; font-family: 'JetBrains Mono', monospace; }
+    .approve-pass-row { display: flex; flex-direction: column; gap: 5px; }
+    .approve-pass-row label { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 0.12em; text-transform: uppercase; }
+    .approve-pass-row input { background: rgba(255,255,255,0.04); border: 1.5px solid rgba(255,255,255,0.08); border-radius: 6px; color: #374151; font-size: 13px; padding: 9px 12px; outline: none; transition: 0.15s; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.12em; }
+    .approve-pass-row input:focus { border-color: #f05454; background: rgba(240,84,84,0.07); }
+    .approve-btns { display: flex; gap: 8px; }
+    .btn-approve-commit { flex: 1; padding: 11px; background: linear-gradient(135deg,#f05454,#b82020); border: none; border-radius: 7px; color: #fff; font-size: 13px; font-weight: 800; letter-spacing: 0.06em; cursor: pointer; transition: 0.18s; font-family: inherit; }
+    .btn-approve-commit:hover { box-shadow: 0 5px 18px rgba(240,84,84,0.42); transform: translateY(-1px); }
+    .btn-approve-cancel { padding: 11px 18px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; color: #6a7a8f; font-size: 13px; font-weight: 700; cursor: pointer; transition: 0.15s; font-family: inherit; }
+    .btn-approve-cancel:hover { background: rgba(255,255,255,0.09); color: #1e293b; }
+
+    /* ── ACTION BUTTON ORANGE ──────────────────── */
+    .btn-orange { background: rgba(240,84,84,0.1); color: #f05454; border-color: rgba(240,84,84,0.22); }
+    .btn-orange:hover { background: #f05454; color: #fff; }
+
+    /* ── SLIP ROW STATUS ─────────────────────── */
+    .slip-approved-row td { opacity: 0.5; }
+    .slip-committed-row td:not(:last-child) { text-decoration: line-through; opacity: 0.45; }
+
+    /* ── EMPTY STATE ─────────────────────────── */
+    .po-empty-state { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px; color: #2a3a50; }
+    .po-empty-icon { font-size: 48px; opacity: 0.25; }
+    .po-empty-text { font-size: 13px; font-style: italic; }
+
+    /* ── TOTAL BAR ────────────────────────────── */
+    .po-total-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #f8fafc; border-top: 1px solid rgba(255,255,255,0.05); flex-shrink: 0; }
+    .po-total-info { display: flex; gap: 20px; align-items: center; }
+    .po-total-chip { font-size: 10px; color: #94a3b8; }
+    .po-total-chip b { color: #f05454; font-family: 'JetBrains Mono', monospace; }
+    /* ── EXCEL UPLOAD PANEL ── */
+    .po-upload-panel { margin:8px 10px 4px; background:#fff5f5; border:1.5px solid #fecaca; border-radius:8px; padding:10px; }
+    .po-upload-panel-title { font-size:9px;font-weight:800;color:#dc2626;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:6px; }
+    .po-upload-col-hint { font-size:8px;color:#475569;background:#fee2e2;border-radius:4px;padding:5px 7px;margin-bottom:7px;line-height:1.7; }
+    .po-upload-col-hint b { color:#dc2626; }
+    .po-upload-dropzone {
+        border:2px dashed #fca5a5; border-radius:7px; background:#fff;
+        text-align:center; padding:14px 10px; cursor:pointer; transition:0.18s;
+        position:relative; margin-bottom:7px;
+    }
+    .po-upload-dropzone:hover, .po-upload-dropzone.drag-over { border-color:#dc2626; background:#fff5f5; }
+    .po-upload-dropzone input[type=file] { position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%; }
+    .po-upload-icon { font-size:20px; margin-bottom:3px; }
+    .po-upload-text { font-size:10px;font-weight:700;color:#dc2626; }
+    .po-upload-hint { font-size:8px;color:#94a3b8;margin-top:2px; }
+    .po-upload-file-name { font-size:9px;font-weight:600;color:#1e293b;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:4px 8px;margin-bottom:6px;display:none;word-break:break-all;font-family:'JetBrains Mono',monospace; }
+    .btn-po-parse { width:100%;padding:9px;background:linear-gradient(135deg,#dc2626,#991b1b);border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:0.04em;transition:0.15s;display:flex;align-items:center;justify-content:center;gap:6px; }
+    .btn-po-parse:hover { opacity:0.9;box-shadow:0 3px 12px rgba(220,38,38,0.35); }
+    .btn-po-parse:disabled { opacity:0.45;cursor:not-allowed; }
+    .po-upload-result { margin-top:6px;font-size:10px;font-weight:600;padding:5px 8px;border-radius:4px;display:none; }
+    .po-upload-result.ok  { background:#d1fae5;color:#059669; }
+    .po-upload-result.err { background:#fee2e2;color:#dc2626; }
+
+    /* ── PULL-OUT REVIEW MODAL ── */
+    .po-review-overlay { position:fixed;inset:0;background:rgba(15,23,42,0.6);display:none;align-items:center;justify-content:center;z-index:2000;backdrop-filter:blur(4px); }
+    .po-review-overlay.open { display:flex; }
+    .po-review-box { background:#fff;border-radius:14px;box-shadow:0 24px 80px rgba(15,23,42,0.25);width:97vw;max-width:1400px;height:92vh;display:flex;flex-direction:column;border:1px solid #e2e8f0;overflow:hidden; }
+    .po-review-header { padding:14px 20px;background:linear-gradient(135deg,#991b1b,#dc2626);display:flex;align-items:center;justify-content:space-between;flex-shrink:0; }
+    .po-review-header-title { font-size:15px;font-weight:800;color:#fff;letter-spacing:0.06em; }
+    .po-review-header-sub { font-size:9px;color:rgba(255,255,255,0.6);letter-spacing:0.1em;margin-top:2px; }
+    .po-review-header-close { background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.3);border-radius:7px;color:#fff;font-size:12px;font-weight:700;padding:7px 14px;cursor:pointer;transition:0.15s;font-family:inherit; }
+    .po-review-header-close:hover { background:rgba(255,255,255,0.28); }
+    .po-review-stats { display:flex;gap:0;background:#f8fafc;border-bottom:1.5px solid #e2e8f0;flex-shrink:0; }
+    .po-rv-stat { padding:10px 16px;display:flex;flex-direction:column;gap:2px;border-right:1px solid #e2e8f0;flex:1; }
+    .po-rv-stat-val { font-size:18px;font-weight:800;color:#1e293b; }
+    .po-rv-stat-lbl { font-size:8px;font-weight:700;color:#94a3b8;letter-spacing:0.1em; }
+    .po-rv-stat.ok .po-rv-stat-val   { color:#059669; }
+    .po-rv-stat.warn .po-rv-stat-val { color:#d97706; }
+    .po-rv-stat.err .po-rv-stat-val  { color:#dc2626; }
+    .po-review-legend { padding:8px 20px;background:#fffbeb;border-bottom:1px solid #fde68a;font-size:10px;color:#92400e;display:flex;align-items:center;gap:14px;flex-shrink:0;flex-wrap:wrap; }
+    .po-legend-dot { display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:3px;vertical-align:middle; }
+    .po-review-table-wrap { flex-grow:1;overflow:auto; }
+    .po-review-table { width:100%;border-collapse:collapse;font-size:11px; }
+    .po-review-table thead th { background:#f1f5f9;color:#64748b;font-size:9px;font-weight:700;letter-spacing:0.1em;padding:9px 8px;text-align:center;position:sticky;top:0;z-index:5;border-bottom:2px solid #e2e8f0;white-space:nowrap;font-family:'JetBrains Mono',monospace; }
+    .po-review-table td { padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:center;color:#374151;white-space:nowrap; }
+    .po-review-table tr:hover td { background:#f8fafc; }
+    .po-review-table tr.rv-matched td { background:#fef3c7; }
+    .po-review-table tr.rv-full td   { background:#f0fdf4; }
+    .po-review-table tr.rv-partial td { background:#fff7ed; }
+    .po-review-table tr.rv-notfound td { background:#fef2f2; }
+    .rv-qty-inp { background:#fff;border:1.5px solid #e2e8f0;border-radius:4px;color:#dc2626;font-size:11px;font-weight:700;padding:4px 6px;font-family:'JetBrains Mono',monospace;width:80px;outline:none;text-align:center;transition:0.14s; }
+    .rv-qty-inp:focus { border-color:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,0.1); }
+    .rv-qty-inp.over { border-color:#f59e0b;background:#fef9c3; }
+    .rv-badge-matched  { display:inline-flex;align-items:center;gap:3px;background:#d1fae5;color:#059669;border:1px solid #6ee7b7;border-radius:4px;padding:2px 7px;font-size:8.5px;font-weight:700;font-family:'JetBrains Mono',monospace; }
+    .rv-badge-partial  { display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#d97706;border:1px solid #fcd34d;border-radius:4px;padding:2px 7px;font-size:8.5px;font-weight:700;font-family:'JetBrains Mono',monospace; }
+    .rv-badge-notfound { display:inline-flex;align-items:center;gap:3px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:4px;padding:2px 7px;font-size:8.5px;font-weight:700;font-family:'JetBrains Mono',monospace; }
+    .po-review-footer { padding:12px 20px;background:#f8fafc;border-top:2px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:12px; }
+    .po-review-footer-note { font-size:10px;color:#6b7280; }
+    .po-review-footer-actions { display:flex;gap:8px;align-items:center; }
+    .btn-po-review-cancel { padding:10px 20px;background:#f9fafb;border:1px solid #e2e8f0;border-radius:7px;color:#6b7280;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:0.15s; }
+    .btn-po-review-cancel:hover { background:#374151;color:#fff; }
+    .btn-po-review-confirm { padding:10px 24px;background:linear-gradient(135deg,#dc2626,#991b1b);border:none;border-radius:7px;color:#fff;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:0.04em;transition:0.15s;display:flex;align-items:center;gap:7px; }
+    .btn-po-review-confirm:hover { box-shadow:0 5px 20px rgba(220,38,38,0.35);transform:translateY(-1px); }
+    </style>
+</head>
+<body>
+
+<div id="po-print-area"></div>
+<button class="print-close-po" id="print-close-po" style="display:none;" onclick="closePOPrint()">✕ CLOSE PRINT</button>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-card">
+        <div class="login-top"><span class="icon">📦</span><h1>TLGP WMS</h1><p>WAREHOUSE MANAGEMENT SYSTEM</p></div>
+        <div class="login-body">
+            <div class="lf"><label>Email Address</label><input type="text" id="log-email" placeholder="user@company.com" autocomplete="off"></div>
+            <div class="lf"><label>Password</label><input type="password" id="log-pass" placeholder="••••••••"></div>
+            <p id="log-err">⚠ Invalid credentials. Please try again.</p>
+            <button class="login-btn" onclick="checkLogin()">LOGIN TO SYSTEM</button>
+        </div>
+        <div class="login-foot">AUTHORIZED PERSONNEL ONLY</div>
+    </div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-icon">📦</div>
+        <div><span class="brand">TLGP WMS</span><span class="ver">PRO v2.0</span></div>
+    </div>
+    <div class="sb-sec">
+        <span class="sb-lbl">NAVIGATION</span>
+        <a class="nav-btn" href="index.html">📦 &nbsp;INVENTORY LIST</a>
+        <a class="nav-btn" href="transfer.html">🚚 &nbsp;TRANSFER IN</a>
+        <a class="nav-btn active" href="pullout.html">📤 &nbsp;PULL-OUT SLIP</a>
+        <a class="nav-btn" href="storingtag.html">🏷 &nbsp;STORING TAG</a>
+        <a class="nav-btn" href="history.html">📜 &nbsp;SYSTEM LOGS</a>
+    </div>
+    <!-- ══ EXCEL UPLOAD PANEL ══ -->
+    <div class="po-upload-panel">
+        <div class="po-upload-panel-title">📂 EXCEL PULL-OUT IMPORT</div>
+        <div class="po-upload-col-hint">
+            Upload Excel file — auto-matches items from inventory using <b>FIFO</b>:<br>
+            <b>Item Code · Lot # · Pallet Ref · Quantity</b><br>
+            Matches by Item Code + Lot + Pallet, picks closest qty ≥ requested (earliest date first).
+        </div>
+        <div class="po-upload-dropzone" id="po-upload-dropzone"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="poHandleDrop(event)">
+            <input type="file" id="po-excel-input" accept=".xlsx,.xls,.csv" onchange="poHandleFileSelect(event)">
+            <div class="po-upload-icon">📊</div>
+            <div class="po-upload-text">Click or drag Excel file here</div>
+            <div class="po-upload-hint">.xlsx · .xls · .csv accepted</div>
+        </div>
+        <div class="po-upload-file-name" id="po-upload-file-name"></div>
+        <button class="btn-po-parse" id="btn-po-parse" onclick="poParseAndReview()" disabled>
+            🔍 MATCH &amp; REVIEW ITEMS
+        </button>
+        <div id="po-upload-result" class="po-upload-result"></div>
+    </div>
+
+    <div class="sb-bot">
+        <button class="btn-danger" onclick="mr()">⚠ MASTER RESET</button>
+    </div>
+</aside>
+
+<!-- PULL-OUT REVIEW MODAL -->
+<div class="po-review-overlay" id="po-review-modal">
+    <div class="po-review-box">
+        <div class="po-review-header">
+            <div>
+                <div class="po-review-header-title">📤 REVIEW PULL-OUT — CONFIRM BEFORE ADDING TO SLIP</div>
+                <div class="po-review-header-sub" id="po-review-filename">File: —</div>
+            </div>
+            <button class="po-review-header-close" onclick="closePOReview()">✕ CANCEL</button>
+        </div>
+        <div class="po-review-stats">
+            <div class="po-rv-stat ok"><span class="po-rv-stat-val" id="porv-total">0</span><span class="po-rv-stat-lbl">EXCEL ROWS</span></div>
+            <div class="po-rv-stat ok"><span class="po-rv-stat-val" id="porv-matched">0</span><span class="po-rv-stat-lbl">MATCHED (FIFO)</span></div>
+            <div class="po-rv-stat warn"><span class="po-rv-stat-val" id="porv-partial">0</span><span class="po-rv-stat-lbl">PARTIAL QTY</span></div>
+            <div class="po-rv-stat err"><span class="po-rv-stat-val" id="porv-notfound">0</span><span class="po-rv-stat-lbl">NOT FOUND</span></div>
+            <div class="po-rv-stat"><span class="po-rv-stat-val" id="porv-totalqty">0</span><span class="po-rv-stat-lbl">TOTAL PULL QTY</span></div>
+        </div>
+        <div class="po-review-legend">
+            ℹ️ <b>FIFO matching:</b> Inventory matched by Item Code + Lot + Pallet, sorted by earliest storing date first.
+            <span><span class="po-legend-dot" style="background:#f0fdf4;border:1px solid #86efac;"></span> Green = qty fully satisfied</span>
+            <span><span class="po-legend-dot" style="background:#fff7ed;border:1px solid #fed7aa;"></span> Orange = partial (inventory qty &lt; requested)</span>
+            <span><span class="po-legend-dot" style="background:#fef2f2;border:1px solid #fca5a5;"></span> Red = not found in inventory</span>
+            &nbsp;|&nbsp; <b>Pull Qty is editable</b> before confirming.
+        </div>
+        <div class="po-review-table-wrap">
+            <table class="po-review-table">
+                <thead><tr>
+                    <th>#</th>
+                    <th>ITEM CODE<br><span style="font-weight:400;opacity:0.6;">(from Excel)</span></th>
+                    <th>LOT #</th>
+                    <th>PALLET REF</th>
+                    <th>REQ. QTY<br><span style="font-weight:400;opacity:0.6;">(Excel)</span></th>
+                    <th>MATCHED LOC</th>
+                    <th>AVAIL QTY</th>
+                    <th>STORING DATE<br><span style="font-weight:400;opacity:0.6;">(FIFO)</span></th>
+                    <th>STATUS</th>
+                    <th>PULL QTY<br><span style="font-weight:400;opacity:0.6;">(editable)</span></th>
+                    <th>MATCH STATUS</th>
+                </tr></thead>
+                <tbody id="po-review-tbody"></tbody>
+            </table>
+        </div>
+        <div class="po-review-footer">
+            <div class="po-review-footer-note">✏️ You can still edit pull quantities. Not-found rows will be skipped. After confirming, items are added to your slip — not yet committed.</div>
+            <div class="po-review-footer-actions">
+                <button class="btn-po-review-cancel" onclick="closePOReview()">CANCEL</button>
+                <button class="btn-po-review-confirm" onclick="loadPOReviewToSlip()">
+                    ✓ ADD TO SLIP
+                    <span id="porv-load-count" style="background:rgba(255,255,255,0.2);border-radius:4px;padding:1px 7px;font-size:11px;"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MAIN -->
+<main class="main">
+<div class="page-content">
+
+    <!-- ══ PULL-OUT SLIP HEADER ══ -->
+    <div class="po-slip-card">
+        <div class="po-slip-banner">
+            <div class="po-banner-left">
+                <div class="po-company">Toshiba Logistics Phils. Corp.</div>
+                <div class="po-slip-big-title">PULL-OUT SLIP</div>
+            </div>
+            <div class="po-banner-right">
+                <div class="po-ctrl-lbl">POS CONTROL NO.</div>
+                <input type="text" id="slip-posno" class="po-ctrl-no-input" placeholder="POS2602-XXX">
+            </div>
+        </div>
+        <div class="po-slip-fields">
+            <div class="po-field-group">
+                <span class="po-field-lbl">FROM</span>
+                <span class="po-field-static">TLGP</span>
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">TO</span>
+                <span class="po-field-static">TPC</span>
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">DATE</span>
+                <input type="date" id="slip-date" class="po-field-inp">
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">REQUESTED BY</span>
+                <input type="text" id="slip-reqby" class="po-field-inp" placeholder="Name / Department">
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">PURPOSE / REMARKS</span>
+                <input type="text" id="slip-purpose" class="po-field-inp" placeholder="e.g. Production Request">
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ TOOLBAR ══ -->
+    <div class="page-header" style="padding:8px 14px;gap:8px;">
+        <div class="ph-left">
+            <h2>📤 PULL-OUT SLIP</h2>
+            <span class="log-summary-badge" id="slip-badge">0 items</span>
+        </div>
+        <div class="ph-right" style="flex-wrap:wrap;gap:6px;">
+            <button class="btn-xls-action" onclick="openAddItem()">+ ADD ITEM</button>
+            <button class="btn-xls-action" onclick="clearSlip()">✕ CLEAR ALL</button>
+            <button class="btn-print-slip" onclick="printPOSlip()">🖨 PRINT SLIP</button>
+            <button class="btn-xls-commit" onclick="openApproval()">✅ APPROVE & COMMIT</button>
+        </div>
+    </div>
+
+    <!-- ══ PENDING SLIP TABLE ══ -->
+    <div class="po-pending-section">
+        <div class="po-pending-header">
+            <div class="po-pending-title">
+                <span class="po-pending-dot"></span>
+                ITEMS PENDING PULL-OUT
+            </div>
+            <div style="font-size:10px;color:#94a3b8;font-style:italic;">Items listed here are staged — not yet deducted from inventory</div>
+        </div>
+
+        <div id="po-empty-state" class="po-empty-state">
+            <div class="po-empty-icon">📋</div>
+            <div class="po-empty-text">No items added yet. Click <b>+ ADD ITEM</b> to begin.</div>
+        </div>
+
+        <div class="po-table-wrap" id="po-table-wrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr class="thead-main">
+                        <th width="36">NO.</th>
+                        <th width="82">LOCATION</th>
+                        <th width="155">ITEM CODE</th>
+                        <th width="105">LOT #</th>
+                        <th width="90">STATUS</th>
+                        <th width="80">PULL QTY</th>
+                        <th width="85">AVAIL QTY</th>
+                        <th width="90">PALLET REF</th>
+                        <th width="100">NO. OF CASES</th>
+                        <th width="110">REMARKS</th>
+                        <th width="82">TLGP LOCATION</th>
+                        <th width="80">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="po-slip-body"></tbody>
+            </table>
+        </div>
+
+        <div class="po-total-bar" id="po-total-bar" style="display:none;">
+            <div class="po-total-info">
+                <div class="po-total-chip">ITEMS: <b id="total-items">0</b></div>
+                <div class="po-total-chip">TOTAL QTY: <b id="total-qty">0</b></div>
+            </div>
+            <div style="font-size:10px;color:#2a3a50;font-style:italic;">Press <b style="color:#34d399;">APPROVE &amp; COMMIT</b> to deduct from inventory</div>
+        </div>
+    </div>
+
+</div>
+</main>
+
+<!-- ══ ADD ITEM MODAL ══ -->
+<div id="add-item-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeAddItem()">
+    <div class="modal-box add-item-modal">
+        <div class="modal-header">
+            <span>📦 SELECT ITEM TO PULL OUT</span>
+            <button class="modal-close" onclick="closeAddItem()">✕</button>
+        </div>
+        <div class="add-item-body">
+
+            <!-- Search -->
+            <div class="ai-search-bar">
+                <div class="fg"><label>Search by Location</label><input type="text" id="ai-loc" placeholder="e.g. TRA0101" oninput="filterResults()"></div>
+                <div class="fg"><label>Search by Item Code</label><input type="text" id="ai-cod" placeholder="e.g. SSBW010NWS" oninput="filterResults()"></div>
+                <div class="fg"><label>Search by Lot No.</label><input type="text" id="ai-lot" placeholder="e.g. 2597911" oninput="filterResults()"></div>
+            </div>
+
+            <!-- Results list -->
+            <div class="ai-results">
+                <div class="ai-result-row header-row">
+                    <span>LOCATION</span><span>ITEM CODE</span><span>LOT #</span><span>QTY</span><span>STATUS</span><span>TYPE</span>
+                </div>
+                <div id="ai-result-list"></div>
+            </div>
+
+            <!-- Add form -->
+            <div class="add-qty-form">
+                <div id="no-selection-msg" class="no-selection-msg">← Select an item above to set pull-out quantity</div>
+                <div id="add-qty-fields" style="display:none;">
+                    <div class="selected-item-info" id="selected-item-info"></div>
+                    <div class="add-qty-inputs" style="margin-top:10px;">
+                        <div class="fg"><label>QTY TO PULL OUT</label><input type="number" id="ai-qty" min="1" placeholder="0" style="font-weight:800;color:#f05454;font-family:monospace;font-size:14px;"></div>
+                        <div class="fg"><label>PALLET REFERENCE</label><input type="text" id="ai-pal" placeholder="e.g. N/A"></div>
+                        <button class="btn-add-item" onclick="addItemToSlip()">+ ADD TO SLIP</button>
+                    </div>
+                    <div class="add-qty-inputs" style="margin-top:6px;">
+                        <div class="fg"><label>NO. OF CASES</label><input type="text" id="ai-noc" placeholder="N/A (for finished product)"></div>
+                        <div class="fg"><label>REMARKS</label><input type="text" id="ai-rem" placeholder="e.g. SSS26020531"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- ══ APPROVAL MODAL ══ -->
+<div id="approve-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeApproval()">
+    <div class="modal-box approve-modal">
+        <div class="modal-header">
+            <span>🔐 APPROVE PULL-OUT</span>
+            <button class="modal-close" onclick="closeApproval()">✕</button>
+        </div>
+        <div class="approve-body">
+            <div class="approve-warning">
+                <h3>⚠ CONFIRMATION REQUIRED</h3>
+                <p>Approving this pull-out will permanently deduct the listed quantities from inventory. This action will be logged in the system.</p>
+            </div>
+
+            <div class="approve-summary">
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">Items to Pull Out</div>
+                    <div class="approve-sum-val" id="apv-items">0</div>
+                </div>
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">Total Quantity</div>
+                    <div class="approve-sum-val" id="apv-qty">0</div>
+                </div>
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">POS Control No.</div>
+                    <div class="approve-sum-val" id="apv-posno" style="font-size:12px;">—</div>
+                </div>
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">Date</div>
+                    <div class="approve-sum-val" id="apv-date" style="font-size:12px;">—</div>
+                </div>
+            </div>
+
+            <div class="approve-pass-row">
+                <label>MASTER PASSWORD TO APPROVE</label>
+                <input type="password" id="approve-pass" placeholder="Enter password to authorize">
+            </div>
+
+            <div class="approve-btns">
+                <button class="btn-approve-cancel" onclick="closeApproval()">CANCEL</button>
+                <button class="btn-approve-commit" onclick="commitApproval()">⚡ APPROVE & COMMIT</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div id="copy-toast" class="copy-toast"></div>
+
+<script src="script.js"></script>
+<script>
+['log-email','log-pass'].forEach(id=>{
+    document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')checkLogin();});
+});
+
+// ── PULL-OUT SLIP STATE ─────────────────────
+let slipRows = []; // { idx, loc, cod, lot, sts, pullQty, maxQty, pal, noc, remarks, dat, typ, acc, dr }
+let selectedDbItem = null; // currently selected item from search
+
+// ── RENDER SLIP TABLE ───────────────────────
+function renderSlip() {
+    const wrap = document.getElementById('po-table-wrap');
+    const empty = document.getElementById('po-empty-state');
+    const totalBar = document.getElementById('po-total-bar');
+    const badge = document.getElementById('slip-badge');
+
+    if (!slipRows.length) {
+        wrap.style.display = 'none';
+        empty.style.display = 'flex';
+        totalBar.style.display = 'none';
+        badge.textContent = '0 items';
+        return;
+    }
+
+    wrap.style.display = 'block';
+    empty.style.display = 'none';
+    totalBar.style.display = 'flex';
+
+    const totalItems = slipRows.length;
+    const totalQty = slipRows.reduce((s, r) => s + r.pullQty, 0);
+    badge.textContent = `${totalItems} item${totalItems !== 1 ? 's' : ''}`;
+    document.getElementById('total-items').textContent = totalItems;
+    document.getElementById('total-qty').textContent = totalQty.toLocaleString();
+
+    const body = document.getElementById('po-slip-body');
+    body.innerHTML = slipRows.map((r, i) => `
+        <tr>
+            <td>${i + 1}</td>
+            <td class="loc-cell">${r.loc}</td>
+            <td><b>${r.cod}</b></td>
+            <td>${r.lot || '—'}</td>
+            <td><span class="bdg status-${(r.sts || '').replace(/\s/g, '')}">${r.sts || '—'}</span></td>
+            <td class="qty-normal">${r.pullQty.toLocaleString()}</td>
+            <td style="color:#94a3b8;">${r.maxQty.toLocaleString()}</td>
+            <td>${r.pal || 'N/A'}</td>
+            <td>${r.noc || 'N/A'}</td>
+            <td>${r.remarks || '—'}</td>
+            <td class="loc-cell">${r.loc}</td>
+            <td><button class="btn btn-red" onclick="removeSlipRow(${i})">✕ DEL</button></td>
+        </tr>
+    `).join('');
+}
+
+function removeSlipRow(i) {
+    slipRows.splice(i, 1);
+    renderSlip();
+}
+
+function clearSlip() {
+    if (slipRows.length && !confirm('Clear all items from pull-out slip?')) return;
+    slipRows = [];
+    clearPODraft();
+    renderSlip();
+}
+
+// ── ADD ITEM MODAL ──────────────────────────
+function openAddItem() {
+    document.getElementById('add-item-modal').style.display = 'flex';
+    filterResults();
+    document.getElementById('ai-loc').focus();
+}
+
+function closeAddItem() {
+    document.getElementById('add-item-modal').style.display = 'none';
+    selectedDbItem = null;
+    document.getElementById('add-qty-fields').style.display = 'none';
+    document.getElementById('no-selection-msg').style.display = 'block';
+    ['ai-loc','ai-cod','ai-lot','ai-qty','ai-pal','ai-noc','ai-rem'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+function filterResults() {
+    const loc = (document.getElementById('ai-loc').value || '').toLowerCase();
+    const cod = (document.getElementById('ai-cod').value || '').toLowerCase();
+    const lot = (document.getElementById('ai-lot').value || '').toLowerCase();
+
+    const list = document.getElementById('ai-result-list');
+    const active = db.filter(x => parseNum(x.qty) > 0);
+
+    let filtered = active.filter(x =>
+        (!loc || (x.loc || '').toLowerCase().includes(loc)) &&
+        (!cod || (x.cod || '').toLowerCase().includes(cod)) &&
+        (!lot || (x.lot || '').toLowerCase().includes(lot))
+    );
+
+    if (!filtered.length) {
+        list.innerHTML = '<div style="padding:20px;text-align:center;color:#2a3a50;font-style:italic;font-size:11px;">No matching items found.</div>';
+        return;
+    }
+
+    // Limit display to 80 rows
+    const display = filtered.slice(0, 80);
+    list.innerHTML = display.map(x => {
+        const idx = db.indexOf(x);
+        return `<div class="ai-result-row" onclick="selectItem(${idx})">
+            <span class="loc-cell">${x.loc}</span>
+            <span><b>${x.cod}</b></span>
+            <span>${x.lot || '—'}</span>
+            <span class="qty-normal" style="font-family:monospace;">${parseNum(x.qty).toLocaleString()}</span>
+            <span><span class="bdg status-${(x.sts || '').replace(/\s/g, '')}">${x.sts || '—'}</span></span>
+            <span>${x.typ || '—'}</span>
+        </div>`;
+    }).join('');
+
+    if (filtered.length > 80) {
+        list.innerHTML += `<div style="padding:8px 12px;text-align:center;color:#94a3b8;font-size:10px;font-style:italic;">Showing 80 of ${filtered.length} results. Refine search.</div>`;
+    }
+}
+
+function selectItem(idx) {
+    const x = db[idx];
+    if (!x) return;
+    selectedDbItem = { idx, item: x };
+    const maxQ = parseNum(x.qty);
+
+    document.getElementById('no-selection-msg').style.display = 'none';
+    document.getElementById('add-qty-fields').style.display = 'block';
+    document.getElementById('selected-item-info').innerHTML = `
+        <div class="info-chip"><div class="info-chip-lbl">LOCATION</div><div class="info-chip-val loc-cell" style="color:#f07070;font-family:monospace;">${x.loc}</div></div>
+        <div class="info-chip"><div class="info-chip-lbl">ITEM CODE</div><div class="info-chip-val"><b>${x.cod}</b></div></div>
+        <div class="info-chip"><div class="info-chip-lbl">LOT NO.</div><div class="info-chip-val">${x.lot || '—'}</div></div>
+        <div class="info-chip"><div class="info-chip-lbl">AVAILABLE QTY</div><div class="info-chip-val qty-normal">${maxQ.toLocaleString()}</div></div>
+    `;
+    const qtyInp = document.getElementById('ai-qty');
+    qtyInp.max = maxQ;
+    qtyInp.value = maxQ;
+    qtyInp.focus();
+    qtyInp.select();
+
+    // Pre-fill pallet
+    document.getElementById('ai-pal').value = x.pal || 'N/A';
+}
+
+function addItemToSlip() {
+    if (!selectedDbItem) return;
+    const { idx, item } = selectedDbItem;
+    const qty = parseNum(document.getElementById('ai-qty').value);
+    const maxQ = parseNum(item.qty);
+    if (qty <= 0 || qty > maxQ) { alert(`❌ Invalid quantity. Must be between 1 and ${maxQ.toLocaleString()}`); return; }
+
+    // Check if same item already in slip
+    const existing = slipRows.find(r => r.idx === idx);
+    if (existing) {
+        if (!confirm(`⚠️ ${item.loc} is already in the slip. Add again?`)) return;
+    }
+
+    slipRows.push({
+        idx, loc: item.loc, cod: item.cod, lot: item.lot, sts: item.sts,
+        pullQty: qty, maxQty: maxQ,
+        pal: document.getElementById('ai-pal').value || 'N/A',
+        noc: document.getElementById('ai-noc').value || 'N/A',
+        remarks: document.getElementById('ai-rem').value,
+        dat: item.dat, typ: item.typ, acc: item.acc, dr: item.dr
+    });
+
+    renderSlip();
+    // Reset selection
+    selectedDbItem = null;
+    document.getElementById('add-qty-fields').style.display = 'none';
+    document.getElementById('no-selection-msg').style.display = 'block';
+    document.getElementById('ai-qty').value = '';
+    document.getElementById('ai-pal').value = '';
+    document.getElementById('ai-noc').value = '';
+    document.getElementById('ai-rem').value = '';
+
+    showToast(`✅ ${item.cod} added to slip`);
+}
+
+// ── APPROVAL MODAL ──────────────────────────
+function openApproval() {
+    if (!slipRows.length) { alert('❌ No items in pull-out slip.'); return; }
+    const posno = document.getElementById('slip-posno').value.trim();
+    if (!posno) { alert('❌ Please enter a POS Control No. first.'); document.getElementById('slip-posno').focus(); return; }
+
+    document.getElementById('apv-items').textContent = slipRows.length;
+    document.getElementById('apv-qty').textContent = slipRows.reduce((s, r) => s + r.pullQty, 0).toLocaleString();
+    document.getElementById('apv-posno').textContent = posno;
+    document.getElementById('apv-date').textContent = document.getElementById('slip-date').value || '—';
+    document.getElementById('approve-pass').value = '';
+    document.getElementById('approve-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('approve-pass').focus(), 50);
+}
+
+function closeApproval() {
+    document.getElementById('approve-modal').style.display = 'none';
+}
+
+function commitApproval() {
+    const pass = document.getElementById('approve-pass').value;
+    if (pass !== 'canon') {
+        document.getElementById('approve-pass').style.borderColor = '#f05454';
+        setTimeout(() => document.getElementById('approve-pass').style.borderColor = '', 1200);
+        alert('❌ Incorrect password. Pull-out not approved.');
+        return;
+    }
+
+    const posno = document.getElementById('slip-posno').value.trim();
+
+    // Validate quantities still available in DB
+    for (const r of slipRows) {
+        const current = db[r.idx];
+        if (!current) { alert(`❌ Item at ${r.loc} no longer exists in inventory.`); return; }
+        const maxQ = parseNum(current.qty);
+        if (r.pullQty > maxQ) { alert(`❌ ${r.loc}: Pull qty (${r.pullQty.toLocaleString()}) exceeds available (${maxQ.toLocaleString()})`); return; }
+    }
+
+    undos.push(JSON.stringify(db));
+    logs = ensureLogs(logs);
+
+    slipRows.forEach(r => {
+        const current = db[r.idx];
+        if (!current) return;
+        const rem = parseNum(current.qty) - r.pullQty;
+        logs.pull.unshift({
+            ...current, outQty: r.pullQty, pos: posno, dr: posno,
+            ts: nowStr(), logType: 'PULL-OUT'
+        });
+        if (rem <= 0) { db[r.idx] = null; }
+        else { db[r.idx].qty = rem; db[r.idx].isMod = true; }
+    });
+
+    db = db.filter(x => x !== null);
+    save();
+
+    closeApproval();
+    const committed = slipRows.length;
+    slipRows = [];
+    clearPODraft();
+    renderSlip();
+    showToast(`✅ Pull-out approved! ${committed} item(s) deducted from inventory.`);
+}
+
+// ── PRINT PULL-OUT SLIP — opens new window for proper landscape ──
+function printPOSlip() {
+    if (!slipRows.length) { alert('❌ No items to print.'); return; }
+    const posno    = document.getElementById('slip-posno').value || '—';
+    const slipDate = document.getElementById('slip-date').value  || '';
+    const reqby    = document.getElementById('slip-reqby').value || '—';
+    const purpose  = document.getElementById('slip-purpose').value || '';
+
+    let totalQty = 0, totalCases = 0;
+    slipRows.forEach(r => {
+        totalQty   += r.pullQty;
+        totalCases += parseFloat(r.noc) || 0;
+    });
+
+    const tbody = slipRows.map((r, i) => `
+        <tr>
+            <td>${i + 1}</td>
+            <td class="l"><b>${r.cod}</b></td>
+            <td>${r.lot || '—'}</td>
+            <td>${r.sts || '—'}</td>
+            <td class="r">${r.pullQty.toLocaleString()}</td>
+            <td>${r.pal || 'N/A'}</td>
+            <td>${r.noc || 'N/A'}</td>
+            <td class="l">${r.remarks || '—'}</td>
+            <td><b>${r.loc}</b></td>
+        </tr>`).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Pull Out Slip</title>
+<style>
+  @page { size: A4 landscape; margin: 8mm 10mm; }
+  * { box-sizing:border-box; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; margin:0; padding:0; }
+  body { font-family:Arial,Helvetica,sans-serif; font-size:8pt; color:#000; background:#fff; }
+
+  .page { width:277mm; margin:0 auto; }
+
+  /* HEADER */
+  .hdr { display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:2mm; }
+  .hdr-left { min-width:65mm; }
+  .logo-row { margin-bottom:1.5mm; }
+  .ft-row  { display:flex; align-items:baseline; gap:2mm; margin-top:1mm; font-size:7.5pt; font-weight:600; }
+  .ft-lbl  { font-weight:700; min-width:10mm; }
+  .ft-val  { border-bottom:1px solid #000; min-width:30mm; padding-bottom:0.5mm; }
+  .hdr-center { flex:1; text-align:center; padding:0 4mm; }
+  .slip-title { font-size:22pt; font-weight:900; letter-spacing:2px; line-height:1; }
+  .hdr-right  { min-width:65mm; display:flex; flex-direction:column; align-items:flex-end; gap:2mm; justify-content:flex-end; }
+  .ctrl-row   { display:flex; align-items:baseline; gap:2mm; }
+  .ctrl-lbl   { font-size:7.5pt; font-weight:700; white-space:nowrap; }
+  .ctrl-val   { font-size:9pt; font-weight:900; font-family:'Courier New',monospace; border-bottom:1.5px solid #000; min-width:45mm; padding-bottom:0.5mm; }
+
+  /* BORDERED BOX */
+  .box { border:1.5px solid #000; width:100%; }
+  .date-row { display:flex; align-items:center; gap:3mm; padding:1.5mm 3mm; border-bottom:1px solid #999; font-size:7.5pt; font-weight:700; }
+  .date-val { border-bottom:1px solid #000; min-width:35mm; display:inline-block; }
+
+  /* TABLE */
+  table { width:100%; border-collapse:collapse; table-layout:fixed; }
+  thead th { background:#c8c8c8; border:1px solid #555; padding:2.5px 2px; font-size:6.5pt; font-weight:700; text-align:center; vertical-align:middle; white-space:normal; word-break:break-word; line-height:1.2; }
+  tbody td  { border:1px solid #bbb; padding:2px 2.5px; font-size:7pt; text-align:center; vertical-align:middle; word-break:break-word; line-height:1.2; }
+  tbody td.l { text-align:left; }
+  tbody td.r { text-align:right; font-weight:600; }
+  tbody tr:nth-child(even) td { background:#f5f5f5; }
+  tfoot td { font-weight:900; background:#e0e0e0; border:1.5px solid #444; padding:2px 3px; font-size:7.5pt; }
+
+  /* COL WIDTHS — 9 cols, total ~277mm */
+  .c0 { width:7mm; }
+  .c1 { width:65mm; }
+  .c2 { width:30mm; }
+  .c3 { width:25mm; }
+  .c4 { width:25mm; }
+  .c5 { width:28mm; }
+  .c6 { width:18mm; }
+  .c7 { width:45mm; }
+  .c8 { width:25mm; }
+
+  /* BELOW BOX */
+  .note { font-size:6.5pt; color:#444; margin-top:2mm; font-style:italic; }
+  .sigs { display:flex; justify-content:space-between; margin-top:6mm; gap:8mm; }
+  .sig  { flex:1; }
+  .sig-lbl  { font-size:7.5pt; font-weight:700; margin-bottom:5mm; }
+  .sig-line { border-top:1.5px solid #000; width:100%; }
+  .footer   { text-align:right; margin-top:2mm; font-size:6.5pt; color:#888; font-style:italic; }
+</style>
+</head><body>
+<div class="page">
+
+  <div class="hdr">
+    <div class="hdr-left">
+      <div class="logo-row"><img src="data:image/png;base64,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" style="height:12mm;width:auto;display:block;" alt="TOSHIBA LOGISTICS"></div>
+      <div class="ft-row"><span class="ft-lbl">From :</span><span class="ft-val">TLGP</span></div>
+      <div class="ft-row"><span class="ft-lbl">To &nbsp;&nbsp;:</span><span class="ft-val">TPC</span></div>
+      ${reqby!=='—'?`<div class="ft-row"><span class="ft-lbl">Req.By:</span><span class="ft-val">${reqby}</span></div>`:''}
+    </div>
+    <div class="hdr-center"><div class="slip-title">PULL OUT SLIP</div></div>
+    <div class="hdr-right">
+      <div class="ctrl-row"><span class="ctrl-lbl">POS Control No:</span><span class="ctrl-val">${posno}</span></div>
+      ${purpose?`<div class="ctrl-row"><span class="ctrl-lbl">Purpose:</span><span class="ctrl-val">${purpose}</span></div>`:''}
+    </div>
+  </div>
+
+  <div class="box">
+    <div class="date-row"><span style="font-weight:700;">DATE:</span><span class="date-val">&nbsp;${slipDate}</span></div>
+    <table>
+      <colgroup>
+        <col class="c0"><col class="c1"><col class="c2"><col class="c3"><col class="c4">
+        <col class="c5"><col class="c6"><col class="c7"><col class="c8">
+      </colgroup>
+      <thead><tr>
+        <th class="c0">NO.</th>
+        <th class="c1">PRODUCT / ITEM CODE</th>
+        <th class="c2">LOT #</th>
+        <th class="c3">QUALITY STATUS</th>
+        <th class="c4">QUANTITY</th>
+        <th class="c5">PALLET REFERENCE</th>
+        <th class="c6">NO. OF CASES</th>
+        <th class="c7">REMARKS</th>
+        <th class="c8">TLGP LOCATION</th>
+      </tr></thead>
+      <tbody>${tbody}</tbody>
+      <tfoot><tr>
+        <td colspan="4" class="r" style="padding-right:4px;">TOTAL</td>
+        <td class="r">${totalQty.toLocaleString()}</td>
+        <td></td>
+        <td class="r">${totalCases||''}</td>
+        <td colspan="2"></td>
+      </tr></tfoot>
+    </table>
+  </div>
+
+  <p class="note">NOTE: No. of Cases is applicable for Finished Product only.</p>
+  <div class="sigs">
+    <div class="sig"><div class="sig-lbl">PREPARED BY:</div><div class="sig-line"></div></div>
+    <div class="sig"><div class="sig-lbl">PICKED BY:</div><div class="sig-line"></div></div>
+    <div class="sig"><div class="sig-lbl">CHECKED BY:</div><div class="sig-line"></div></div>
+  </div>
+  <div class="footer">PLC-TPC-032-R00 &nbsp;|&nbsp; Printed: ${new Date().toLocaleString('en-GB')}</div>
+</div>
+<script>window.onload=function(){ window.print(); window.onafterprint=function(){ window.close(); }; }<\/script>
+</body></html>`;
+
+    const pw = window.open('', '_blank', 'width=900,height=600,scrollbars=yes');
+    pw.document.write(html);
+    pw.document.close();
+}
+
+function closePOPrint() {
+    document.getElementById('po-print-area').style.display = 'none';
+    document.getElementById('print-close-po').style.display = 'none';
+}
+
+// ── TOAST ───────────────────────────────────
+function showToast(msg) {
+    const toast = document.getElementById('copy-toast');
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+// ── DRAFT SAVE / RESTORE ────────────────────────
+function savePODraft() {
+    try {
+        sessionStorage.setItem('tlgp_po_draft', JSON.stringify({
+            slipRows,
+            posno:   document.getElementById('slip-posno').value,
+            date:    document.getElementById('slip-date').value,
+            reqby:   document.getElementById('slip-reqby').value,
+            purpose: document.getElementById('slip-purpose').value
+        }));
+    } catch(e) {}
+}
+function clearPODraft() {
+    sessionStorage.removeItem('tlgp_po_draft');
+}
+window.addEventListener('beforeunload', savePODraft);
+
+// ── SET TODAY'S DATE DEFAULT & PREFILL ─────────
+window.addEventListener('load', () => {
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('slip-date').value = today;
+
+    // Restore draft (overrides today's date if a draft date was saved)
+    try {
+        const raw = sessionStorage.getItem('tlgp_po_draft');
+        if (raw) {
+            const d = JSON.parse(raw);
+            if (d.posno)   document.getElementById('slip-posno').value   = d.posno;
+            if (d.date)    document.getElementById('slip-date').value    = d.date;
+            if (d.reqby)   document.getElementById('slip-reqby').value   = d.reqby;
+            if (d.purpose) document.getElementById('slip-purpose').value = d.purpose;
+            if (Array.isArray(d.slipRows) && d.slipRows.length) {
+                slipRows = d.slipRows;
+                renderSlip();
+                showToast('📂 Pull-out draft restored');
+            }
+        }
+    } catch(e) {}
+
+    // If redirected from inventory OUT button, open search pre-filled
+    const prefillLoc = sessionStorage.getItem('po_prefill_loc');
+    const prefillCod = sessionStorage.getItem('po_prefill_cod');
+    if (prefillLoc || prefillCod) {
+        sessionStorage.removeItem('po_prefill_loc');
+        sessionStorage.removeItem('po_prefill_cod');
+        // Wait for DB to load then open
+        const waitForDB = setInterval(() => {
+            if (db.length > 0) {
+                clearInterval(waitForDB);
+                openAddItem();
+                if (prefillLoc) document.getElementById('ai-loc').value = prefillLoc;
+                if (prefillCod) document.getElementById('ai-cod').value = prefillCod;
+                filterResults();
+                // Auto-select if single match
+                const active = db.filter(x => parseNum(x.qty) > 0);
+                const match = active.filter(x =>
+                    (!prefillLoc || x.loc === prefillLoc) &&
+                    (!prefillCod || x.cod === prefillCod)
+                );
+                if (match.length === 1) selectItem(db.indexOf(match[0]));
+            }
+        }, 100);
+    }
+});
+
+// ── KEYBOARD SHORTCUTS IN MODAL ──────────────
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        closeAddItem();
+        closeApproval();
+    }
+    if (e.key === 'Enter' && document.getElementById('approve-modal').style.display === 'flex') {
+        commitApproval();
+    }
+    if (e.key === 'Enter' && document.getElementById('add-qty-fields').style.display === 'block') {
+        const active = document.activeElement;
+        if (active && active.closest('.add-qty-inputs')) addItemToSlip();
+    }
+});
+
+/* ══════════════════════════════════════════════════════════════
+   EXCEL PULL-OUT IMPORT — FIFO MATCHING ENGINE
+   ══════════════════════════════════════════════════════════════ */
+
+const PO_COL_RULES = [
+    { k:'srcloc', p:1,  kw:['sourceloc','srcloc','sourcelocation'] },
+    { k:'loc',    p:2,  kw:['tlgploc','tlgplocation','warehouseloc'] },
+    { k:'noc',    p:3,  kw:['noofcases','numberofcases','numcases','nocases','numberofcase'] },
+    { k:'cod',    p:4,  kw:['productitemcode','itemcode','productcode','productitem','itemno','partno','partcode','materialcode','matcode','matno'] },
+    { k:'lot',    p:5,  kw:['lotno','lotnumber','batchno','batchnumber'] },
+    { k:'sts',    p:6,  kw:['qualitystatus','qualitysts','qcstatus'] },
+    { k:'qty',    p:7,  kw:['quantity'] },
+    { k:'exp',    p:8,  kw:['expirydate','expirationdate','expdate','bestbefore'] },
+    { k:'pal',    p:9,  kw:['palletref','palletreference','palletid','palletno'] },
+    { k:'rem',    p:10, kw:['remarks','remark'] },
+    { k:'dat',    p:11, kw:['storingdate','transferdate','receivingdate'] },
+    { k:'typ',    p:12, kw:['itemtype','materialtype'] },
+    { k:'dr',     p:13, kw:['drinvoice','deliveryreceipt','invoiceno','drno'] },
+    { k:'loc',    p:20, kw:['location'] },
+    { k:'lot',    p:21, kw:['lotnum','batch','lot'] },
+    { k:'sts',    p:22, kw:['status'] },
+    { k:'qty',    p:23, kw:['qty'] },
+    { k:'exp',    p:24, kw:['expiry','expiration'] },
+    { k:'pal',    p:25, kw:['pallet'] },
+    { k:'dat',    p:26, kw:['date'] },
+    { k:'noc',    p:27, kw:['cases','noc'] },
+    { k:'cod',    p:28, kw:['product','item','code'] },
+    { k:'loc',    p:29, kw:['loc'] },
+];
+
+function poStripH(h){ return (h||'').toString().toLowerCase().replace(/[^a-z0-9]/g,''); }
+
+function poMatchColKey(rawHeader){
+    const s = poStripH(rawHeader);
+    if(!s||s.length<2) return null;
+    let best=null;
+    for(const rule of PO_COL_RULES){
+        for(const kw of rule.kw){
+            const hit=(s===kw)||(kw.length>=4&&s.includes(kw))||(s.length>=4&&kw.includes(s));
+            if(hit){ if(!best||rule.p<best.p) best=rule; break; }
+        }
+    }
+    return best?best.k:null;
+}
+
+function poScoreRow(row){ const seen=new Set(); let sc=0; for(const c of row){ const k=poMatchColKey(c); if(k&&!seen.has(k)){ seen.add(k); sc++; } } return sc; }
+function poMergeRows(a,b){ const len=Math.max(a.length,b.length),m=[]; for(let i=0;i<len;i++){const av=(a[i]||'').toString().trim(),bv=(b[i]||'').toString().trim();m.push(av&&bv?`${av} ${bv}`:av||bv);} return m; }
+
+function poParseExcel(workbook){
+    const sheet=workbook.Sheets[workbook.SheetNames[0]];
+    const raw=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+    if(!raw||raw.length<2) return{error:'Sheet appears empty.'};
+    const SCAN=Math.min(20,raw.length);
+    let bestScore=0,bestHeaders=raw[0],bestHeaderRowIdx=0;
+    for(let i=0;i<SCAN;i++){
+        const s1=poScoreRow(raw[i]); if(s1>bestScore){bestScore=s1;bestHeaders=raw[i];bestHeaderRowIdx=i;}
+        if(i+1<SCAN){const m=poMergeRows(raw[i],raw[i+1]);const sm=poScoreRow(m);if(sm>bestScore){bestScore=sm;bestHeaders=m;bestHeaderRowIdx=i;}}
+    }
+    const colMap={},usedKeys=new Set();
+    bestHeaders.forEach((h,i)=>{const key=poMatchColKey(h);if(key&&!usedKeys.has(key)){colMap[i]=key;usedKeys.add(key);}});
+    const rows=[];
+    for(let r=bestHeaderRowIdx+1;r<raw.length;r++){
+        const rowArr=raw[r];
+        if(rowArr.every(c=>!(c||'').toString().trim())) continue;
+        const rowText=rowArr.map(c=>(c||'').toString().toUpperCase().trim()).join(' ');
+        if(/\bTOTAL\b|\bGRAND TOTAL\b|\bSUBTOTAL\b/.test(rowText)) break;
+        const isHdr=rowArr.some(c=>{const t=(c||'').toString().toUpperCase().trim();return t==='NO.'||t==='NO'||t==='ITEM CODE'||t==='PRODUCT CODE'||t==='PRODUCT/ITEM CODE'||t==='LOT #'||t==='LOT NUMBER'||t==='LOT NO'||t==='LOT NO.'||t==='QUANTITY'||t==='QTY'||t==='QUALITY STATUS'||t==='STATUS'||t==='NO. OF CASES'||t==='CASES'||t==='PALLET NO.'||t==='PALLET NO'||t==='REMARKS'||t==='LOCATION';});
+        if(isHdr) continue;
+        const obj={cod:'',lot:'',qty:'',pal:'',rem:'',noc:''};
+        Object.entries(colMap).forEach(([ci,key])=>{obj[key]=(rowArr[parseInt(ci)]||'').toString().trim();});
+        if(!obj.cod) continue;
+        rows.push(obj);
+    }
+    return{rows,colMap};
+}
+
+/* FIFO MATCHING */
+function fifoMatch(excelRow){
+    const parseN=v=>v?parseFloat((v||'0').toString().replace(/,/g,''))||0:0;
+    const reqQty=parseN(excelRow.qty);
+    const reqCod=(excelRow.cod||'').toUpperCase().trim();
+    const reqLot=(excelRow.lot||'').toString().trim();
+    const reqPal=(excelRow.pal||'').toString().trim();
+
+    let candidates=db.filter(x=>x&&parseN(x.qty)>0);
+    // Must match item code
+    candidates=candidates.filter(x=>(x.cod||'').toUpperCase()===reqCod);
+    // Match lot if provided
+    if(reqLot) candidates=candidates.filter(x=>(x.lot||'').toString().toLowerCase()===reqLot.toLowerCase());
+    // Match pallet if provided (relax if no match)
+    if(reqPal&&reqPal.toUpperCase()!=='N/A'&&reqPal!==''){
+        const pm=candidates.filter(x=>(x.pal||'').toString().toLowerCase()===reqPal.toLowerCase());
+        if(pm.length>0) candidates=pm;
+    }
+
+    if(!candidates.length) return{match:null,matchType:'notfound',dbIdx:-1,availQty:0,suggestedQty:0};
+
+    // FIFO: sort by storing date ascending (earliest first)
+    candidates=[...candidates].sort((a,b)=>{
+        const da=a.dat?new Date(a.dat):new Date(0);
+        const db2=b.dat?new Date(b.dat):new Date(0);
+        return da-db2;
+    });
+
+    // Find sufficient (qty >= requested) — pick FIFO first (earliest date)
+    const sufficient=candidates.filter(x=>parseN(x.qty)>=reqQty);
+    if(sufficient.length){
+        const picked=sufficient[0]; // earliest date
+        return{match:picked,matchType:'full',dbIdx:db.indexOf(picked),availQty:parseN(picked.qty),suggestedQty:reqQty};
+    }
+
+    // Partial: pick FIFO first with highest available
+    const best=candidates.reduce((a,b2)=>parseN(a.qty)>=parseN(b2.qty)?a:b2);
+    return{match:best,matchType:'partial',dbIdx:db.indexOf(best),availQty:parseN(best.qty),suggestedQty:parseN(best.qty)};
+}
+
+/* FILE UPLOAD HANDLERS */
+let _poXlsxFile=null, _poReviewRows=[];
+
+function poHandleFileSelect(e){ const f=e.target.files[0]; if(f) poSetFile(f); }
+function poHandleDrop(e){
+    e.preventDefault();
+    document.getElementById('po-upload-dropzone').classList.remove('drag-over');
+    const f=e.dataTransfer.files[0];
+    if(!f) return;
+    if(!f.name.match(/\.(xlsx|xls|csv)$/i)){poShowResult('err','❌ Please upload .xlsx, .xls, or .csv');return;}
+    poSetFile(f);
+}
+function poSetFile(file){
+    _poXlsxFile=file;
+    const n=document.getElementById('po-upload-file-name');
+    n.textContent='📄 '+file.name; n.style.display='block';
+    document.getElementById('btn-po-parse').disabled=false;
+    document.getElementById('po-upload-result').style.display='none';
+}
+function poShowResult(type,msg){
+    const el=document.getElementById('po-upload-result');
+    el.className=`po-upload-result ${type}`; el.textContent=msg; el.style.display='block';
+}
+
+function poParseAndReview(){
+    if(!_poXlsxFile){poShowResult('err','⚠ Please select a file first.');return;}
+    const btn=document.getElementById('btn-po-parse');
+    btn.disabled=true; btn.innerHTML='⏳ MATCHING...';
+    const reader=new FileReader();
+    reader.onload=function(e){
+        try{
+            const data=new Uint8Array(e.target.result);
+            const wb=XLSX.read(data,{type:'array'});
+            const result=poParseExcel(wb);
+            if(result.error){poShowResult('err','❌ '+result.error);btn.disabled=false;btn.innerHTML='🔍 MATCH &amp; REVIEW ITEMS';return;}
+            if(!result.rows||!result.rows.length){poShowResult('err','❌ No valid data rows found. Check Item Code column.');btn.disabled=false;btn.innerHTML='🔍 MATCH &amp; REVIEW ITEMS';return;}
+            if(!db||!db.length){poShowResult('err','⚠ Inventory not loaded yet. Please wait and try again.');btn.disabled=false;btn.innerHTML='🔍 MATCH &amp; REVIEW ITEMS';return;}
+            poShowResult('ok',`✅ ${result.rows.length} rows parsed. Opening review...`);
+            openPOReview(result.rows,_poXlsxFile.name);
+        }catch(err){poShowResult('err','❌ Parse error: '+err.message);}
+        btn.disabled=false; btn.innerHTML='🔍 MATCH &amp; REVIEW ITEMS';
+    };
+    reader.readAsArrayBuffer(_poXlsxFile);
+}
+
+function openPOReview(parsedRows,filename){
+    const parseN=v=>v?parseFloat((v||'0').toString().replace(/,/g,''))||0:0;
+    _poReviewRows=parsedRows.map((r,i)=>{
+        const m=fifoMatch(r);
+        const reqQty=parseN(r.qty);
+        return{idx:i,cod:(r.cod||'').toUpperCase(),lot:r.lot||'',pal:r.pal||'',reqQty,rem:r.rem||'',noc:r.noc||'',...m,pullQty:m.suggestedQty||Math.min(reqQty,m.availQty||0)};
+    });
+    const total=_poReviewRows.length;
+    const matched=_poReviewRows.filter(r=>r.matchType==='full').length;
+    const partial=_poReviewRows.filter(r=>r.matchType==='partial').length;
+    const notfound=_poReviewRows.filter(r=>r.matchType==='notfound').length;
+    const totalQty=_poReviewRows.reduce((s,r)=>s+(r.pullQty||0),0);
+    document.getElementById('po-review-filename').textContent='File: '+filename;
+    document.getElementById('porv-total').textContent=total;
+    document.getElementById('porv-matched').textContent=matched;
+    document.getElementById('porv-partial').textContent=partial;
+    document.getElementById('porv-notfound').textContent=notfound;
+    document.getElementById('porv-totalqty').textContent=totalQty.toLocaleString();
+    document.getElementById('porv-load-count').textContent=(matched+partial)+' rows';
+    renderPOReviewTable();
+    document.getElementById('po-review-modal').classList.add('open');
+}
+
+function renderPOReviewTable(){
+    const tbody=document.getElementById('po-review-tbody');
+    tbody.innerHTML=_poReviewRows.map((r,i)=>{
+        const rowCls=r.matchType==='full'?'rv-full':r.matchType==='partial'?'rv-partial':'rv-notfound';
+        const badge=r.matchType==='full'?`<span class="rv-badge-matched">✓ MATCHED</span>`:r.matchType==='partial'?`<span class="rv-badge-partial">⚠ PARTIAL</span>`:`<span class="rv-badge-notfound">✕ NOT FOUND</span>`;
+        const loc=r.match?`<span style="color:#dc2626;font-weight:700;font-family:'JetBrains Mono',monospace;">${r.match.loc}</span>`:'—';
+        const avail=r.availQty?r.availQty.toLocaleString():'—';
+        const storingDate=r.match?(r.match.dat||'—'):'—';
+        const sts=r.match?`<span class="bdg status-${(r.match.sts||'').replace(/\s/g,'')}">${r.match.sts||'—'}</span>`:'—';
+        const qtyInp=r.matchType==='notfound'?`<span style="color:#94a3b8;font-size:10px;">—</span>`:`<input class="rv-qty-inp${r.pullQty>(r.availQty||0)?' over':''}" data-ri="${i}" data-avail="${r.availQty||0}" type="number" min="1" max="${r.availQty||0}" value="${r.pullQty}" oninput="updatePOReviewQty(${i},this)">`;
+        return `<tr class="${rowCls}"><td style="color:#94a3b8;font-family:'JetBrains Mono',monospace;font-size:10px;">${i+1}</td><td style="font-weight:700;color:#1e293b;font-family:'JetBrains Mono',monospace;">${r.cod}</td><td style="font-family:'JetBrains Mono',monospace;">${r.lot||'—'}</td><td>${r.pal||'—'}</td><td style="color:#6b7280;font-family:'JetBrains Mono',monospace;">${r.reqQty.toLocaleString()}</td><td>${loc}</td><td style="color:#2563eb;font-weight:700;font-family:'JetBrains Mono',monospace;">${avail}</td><td style="font-family:'JetBrains Mono',monospace;color:#6b7280;">${storingDate}</td><td>${sts}</td><td>${qtyInp}</td><td>${badge}</td></tr>`;
+    }).join('');
+}
+
+function updatePOReviewQty(idx,input){
+    const avail=parseFloat(input.dataset.avail)||0;
+    _poReviewRows[idx].pullQty=parseFloat(input.value)||0;
+    input.classList.toggle('over',_poReviewRows[idx].pullQty>avail);
+    document.getElementById('porv-totalqty').textContent=_poReviewRows.reduce((s,r)=>s+(r.pullQty||0),0).toLocaleString();
+}
+
+function closePOReview(){
+    document.getElementById('po-review-modal').classList.remove('open');
+}
+
+function loadPOReviewToSlip(){
+    const parseN=v=>v?parseFloat((v||'0').toString().replace(/,/g,''))||0:0;
+    const valid=_poReviewRows.filter(r=>r.matchType!=='notfound'&&r.pullQty>0);
+    if(!valid.length){alert('❌ No valid matched rows to add.');return;}
+    const overQty=valid.filter(r=>r.pullQty>(r.availQty||0));
+    if(overQty.length){
+        if(!confirm(`⚠️ ${overQty.length} row(s) exceed available inventory.\nThey will be capped to available qty. Continue?`)) return;
+        overQty.forEach(r=>r.pullQty=r.availQty||0);
+    }
+    closePOReview();
+    let added=0;
+    valid.forEach(r=>{
+        if(!r.match||r.dbIdx<0) return;
+        const item=db[r.dbIdx]; if(!item) return;
+        const maxQ=parseN(item.qty);
+        const pullQty=Math.min(r.pullQty,maxQ);
+        if(pullQty<=0) return;
+        const existingIdx=slipRows.findIndex(s=>s.idx===r.dbIdx);
+        if(existingIdx>=0){
+            slipRows[existingIdx].pullQty=Math.min(slipRows[existingIdx].pullQty+pullQty,maxQ);
+        } else {
+            slipRows.push({idx:r.dbIdx,loc:item.loc,cod:item.cod,lot:item.lot,sts:item.sts,pullQty,maxQty:maxQ,pal:item.pal||'N/A',noc:r.noc||'N/A',remarks:r.rem||'',dat:item.dat,typ:item.typ,acc:item.acc,dr:item.dr});
+        }
+        added++;
+    });
+    renderSlip();
+    showToast(`✅ ${added} item(s) added to pull-out slip from Excel`);
+    _poXlsxFile=null; _poReviewRows=[];
+    document.getElementById('po-upload-file-name').style.display='none';
+    document.getElementById('btn-po-parse').disabled=true;
+    document.getElementById('po-upload-result').style.display='none';
+    document.getElementById('po-excel-input').value='';
+}
+</script>
+
+<!-- Toast CSS (must be present) -->
+<style>
+.copy-toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+    background: #1e2d42; border: 1px solid rgba(61,142,245,0.3);
+    color: #374151; font-size: 12px; font-weight: 600;
+    padding: 10px 18px; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(10px); transition: 0.22s;
+    pointer-events: none;
+}
+.copy-toast.show { opacity: 1; transform: none; }
+</style>
+</body>
+</html>
